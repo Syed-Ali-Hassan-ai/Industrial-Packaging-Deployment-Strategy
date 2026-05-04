@@ -42,15 +42,21 @@ jobs:
         run: docker compose up -d --build
 
       # ── 4. Wait for agent to be healthy ────────────────────────────────────
+      # 300 s timeout: CI runners need time to pull ChromaDB image and for the
+      # agent to call OpenAI embeddings API for the initial document ingestion.
       - name: Wait for agent health check
         run: |
-          echo "Waiting for agent to become ready (up to 120 s)..."
-          timeout 120 bash -c \
-            'until curl -sf http://localhost:8000/health | grep -q "\"agent_ready\":true"; do
-               echo "  not ready yet — sleeping 5 s"
-               sleep 5
-             done'
-          echo "Agent is healthy."
+          echo "Waiting for agent to become ready (up to 300 s)..."
+          for i in $(seq 1 60); do
+            STATUS=$(curl -sf http://localhost:8000/health 2>/dev/null || true)
+            echo "$STATUS" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('agent_ready') else 1)" 2>/dev/null \
+              && echo "Agent ready after $((i*5)) s" && break
+            echo "  attempt $i/60 — not ready yet (${STATUS:-no response})"
+            sleep 5
+          done
+          # Final check — fail the step if agent is still not ready
+          curl -sf http://localhost:8000/health | python3 -c \
+            "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('agent_ready') else 1)"
 
       # ── 5. Run the evaluation suite ────────────────────────────────────────
       # run_eval.py exits 0 on pass, 1 on fail.
