@@ -1,0 +1,3 @@
+# Lightweight evaluation-only dependencies (used in CI, not in the container)
+openai==1.54.5
+requests==2.32.3

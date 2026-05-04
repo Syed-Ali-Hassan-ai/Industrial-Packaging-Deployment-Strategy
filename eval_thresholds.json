@@ -1,0 +1,12 @@
+{
+  "faithfulness": {
+    "threshold": 0.70,
+    "description": "Measures whether every factual claim in the generated answer is supported by the retrieved context chunks. A score of 1.0 means all claims are grounded; 0.0 means the answer is fully hallucinated.",
+    "justification": "0.70 is chosen as the minimum acceptable faithfulness. Below this threshold the agent is fabricating a material proportion of its answer, which is unacceptable for a knowledge-grounded system. Setting it at 0.80 would create excessive false failures because the LLM-as-judge (gpt-4o-mini) itself introduces variance of ±0.05–0.10; at 0.60 the gate would permit too much hallucination. A 10% increase to 0.80 would likely cause intermittent CI failures even when the agent is healthy. A 10% decrease to 0.60 would allow one in three claims to be ungrounded."
+  },
+  "answer_relevancy": {
+    "threshold": 0.75,
+    "description": "Measures whether the generated answer directly and completely addresses the question asked. A score of 1.0 means the answer is fully on-topic; 0.0 means it is entirely off-topic.",
+    "justification": "0.75 ensures answers are substantively responsive while tolerating minor phrasing variations. At 0.85 the gate rejects answers that are correct but phrased differently from the expected format, leading to noise in CI. At 0.65 it permits answers that mention the topic but do not resolve the question. A 10% increase to 0.85 would flag roughly 20% of valid responses as failures based on stylistic differences alone. A 10% decrease to 0.65 would pass tangentially related but ultimately unhelpful answers."
+  }
+}

@@ -1,0 +1,59 @@
+services:
+
+  # ── Vector database ──────────────────────────────────────────────────────────
+  # ChromaDB runs as a standalone HTTP server so the agent connects over the
+  # internal Docker network (chroma:8000) without any local file sharing.
+  # chroma_data volume ensures the vector index survives container restarts
+  # (proving persistent state as required by the assignment).
+  chroma:
+    image: chromadb/chroma:0.5.20
+    environment:
+      IS_PERSISTENT: "TRUE"
+      PERSIST_DIRECTORY: /chroma/chroma
+      ANONYMIZED_TELEMETRY: "FALSE"
+    volumes:
+      - chroma_data:/chroma/chroma
+    ports:
+      # Expose on host port 8001 so the agent API (port 8000) does not clash.
+      - "8001:8000"
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - >
+          python -c
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/heartbeat')"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+  # ── RAG Agent API ─────────────────────────────────────────────────────────────
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      # OPENAI_API_KEY is read from the host environment or .env file at
+      # compose-up time. It is never baked into the image.
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - CHROMA_HOST=chroma      # service name = DNS name on the Docker network
+      - CHROMA_PORT=8000
+      - CHROMA_MODE=server
+      - COLLECTION_NAME=packaging_kb
+      - DATA_DIR=/app/data
+    depends_on:
+      chroma:
+        condition: service_healthy
+    restart: unless-stopped
+
+
+# ── Named volumes ─────────────────────────────────────────────────────────────
+# chroma_data persists the vector index across container restarts.
+# Because this is a named (not anonymous) volume, `docker compose down` does
+# NOT remove it — only `docker compose down -v` does.
+volumes:
+  chroma_data:
+    driver: local

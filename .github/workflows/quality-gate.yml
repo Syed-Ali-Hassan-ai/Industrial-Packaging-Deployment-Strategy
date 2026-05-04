@@ -1,0 +1,88 @@
+name: Quality Gate
+
+# Trigger on every push/PR to the main branch.
+# The gate blocks deployment if RAG quality metrics fall below the thresholds
+# defined in eval_thresholds.json.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  evaluate:
+    name: RAG Quality Evaluation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      # ── 1. Source ─────────────────────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── 2. Python (evaluation script only — agent runs inside Docker) ──────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-eval.txt
+
+      - name: Install evaluation dependencies
+        run: pip install -r requirements-eval.txt
+
+      # ── 3. Build and start multi-service stack ────────────────────────────
+      # OPENAI_API_KEY is read from GitHub Secrets (stored in the repository
+      # Settings → Secrets → Actions). It is NEVER committed to any file.
+      # Docker Compose picks it up from the shell environment via ${OPENAI_API_KEY}
+      # in docker-compose.yml.
+      - name: Build and start services
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: docker compose up -d --build
+
+      # ── 4. Wait for agent to be healthy ────────────────────────────────────
+      - name: Wait for agent health check
+        run: |
+          echo "Waiting for agent to become ready (up to 120 s)..."
+          timeout 120 bash -c \
+            'until curl -sf http://localhost:8000/health | grep -q "\"agent_ready\":true"; do
+               echo "  not ready yet — sleeping 5 s"
+               sleep 5
+             done'
+          echo "Agent is healthy."
+
+      # ── 5. Run the evaluation suite ────────────────────────────────────────
+      # run_eval.py exits 0 on pass, 1 on fail.
+      # All credentials come from OPENAI_API_KEY secret; none are in source.
+      - name: Run evaluation suite
+        id: eval
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AGENT_URL: http://localhost:8000
+        run: python run_eval.py
+
+      # ── 6. Publish results as a build artefact ─────────────────────────────
+      # always() ensures the artefact is uploaded even when the gate fails,
+      # so engineers can inspect the scores that caused the failure.
+      - name: Upload evaluation results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-results-${{ github.run_number }}
+          path: eval_results.json
+
+      # ── 7. Print results to the job log for quick inspection ───────────────
+      - name: Print results summary
+        if: always()
+        run: |
+          echo "──────────────────────────────────────────────"
+          echo "eval_results.json"
+          echo "──────────────────────────────────────────────"
+          cat eval_results.json || echo "(file not found)"
+
+      # ── 8. Teardown ────────────────────────────────────────────────────────
+      # -v removes the chroma_data volume so each run starts from a clean state.
+      - name: Stop services
+        if: always()
+        run: docker compose down -v
