@@ -58,7 +58,22 @@ jobs:
           curl -sf http://localhost:8000/health | python3 -c \
             "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('agent_ready') else 1)"
 
-      # ── 5. Run the evaluation suite ────────────────────────────────────────
+      # ── 5. Diagnostics — container state and live agent smoke-test ───────────
+      - name: Diagnose stack before eval
+        if: always()
+        run: |
+          echo "=== docker compose ps ==="
+          docker compose ps
+          echo ""
+          echo "=== agent container logs (last 60 lines) ==="
+          docker compose logs agent --tail=60
+          echo ""
+          echo "=== live smoke query ==="
+          curl -s -X POST http://localhost:8000/query \
+            -H "Content-Type: application/json" \
+            -d '{"question":"What is corrugated cardboard?"}' || echo "SMOKE QUERY FAILED"
+
+      # ── 6. Run the evaluation suite ────────────────────────────────────────
       # run_eval.py exits 0 on pass, 1 on fail.
       # All credentials come from OPENAI_API_KEY secret; none are in source.
       - name: Run evaluation suite
